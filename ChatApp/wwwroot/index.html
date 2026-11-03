@@ -1,0 +1,194 @@
+﻿<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>چت دو نفره با SignalR</title>
+    <style>
+        body {
+            font-family: Tahoma, sans-serif;
+            background: #f4f4f9;
+            padding: 20px;
+        }
+
+        .chat-container {
+            max-width: 500px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #messagesList {
+            list-style-type: none;
+            padding: 0;
+            height: 250px;
+            overflow-y: scroll;
+            border: 1px solid #ddd;
+            margin-bottom: 5px;
+            padding: 10px;
+        }
+
+            #messagesList li {
+                margin-bottom: 8px;
+                border-bottom: 1px dashed #eee;
+                padding-bottom: 4px;
+            }
+
+        .message-info {
+            font-size: 11px;
+            color: #888;
+            float: left;
+        }
+
+        input, button {
+            padding: 8px;
+            margin: 5px 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background: #0056b3;
+            }
+
+        #typingIndicator {
+            font-size: 12px;
+            color: #666;
+            height: 20px;
+            font-style: italic;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="chat-container">
+        <!-- فرم ورود به اتاق -->
+        <div id="setup-container">
+            <h2>ورود به اتاق چت</h2>
+            <input type="text" id="userInput" placeholder="نام شما..." />
+            <input type="text" id="roomInput" placeholder="نام اتاق (مثلا: room1)..." />
+            <button id="joinButton">ورود به اتاق</button>
+        </div>
+
+        <!-- بخش مکالمه -->
+        <div id="chat-box" class="hidden">
+            <h3 id="roomTitle"></h3>
+            <ul id="messagesList"></ul>
+            <div id="typingIndicator"></div>
+            <input type="text" id="messageInput" placeholder="پیام خود را بنویسید..." />
+            <button id="sendButton">ارسال پیام</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <script>
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("/chathub")
+                .build();
+
+            let currentRoom = "";
+            let currentUser = "";
+            let typingTimeout = null;
+
+            // دریافت پیام جدید
+            connection.on("ReceiveMessage", function (messageId, user, message) {
+                const messagesList = document.getElementById("messagesList");
+                const li = document.createElement("li");
+                li.innerHTML = `<strong>${user}:</strong> ${message} <span class="message-info" id="status-${messageId}">✓</span>`;
+                messagesList.appendChild(li);
+                messagesList.scrollTop = messagesList.scrollHeight;
+
+                // اگر این پیام توسط کاربر مقابل فرستاده شده، به سرور اعلام می‌کنیم که خوانده شده است
+                if (user !== currentUser) {
+                    connection.invoke("MarkAsRead", currentRoom, messageId);
+                }
+            });
+
+            // دریافت رویداد خوانده شدن پیام (تبدیل یک تیک به دو تیک)
+            connection.on("MessageRead", function (messageId) {
+                const statusSpan = document.getElementById(`status-${messageId}`);
+                if (statusSpan) {
+                    statusSpan.textContent = "✓✓"; // دو تیک (خوانده شد)
+                    statusSpan.style.color = "#4CAF50"; // رنگ سبز برای تیک دوم
+                }
+            });
+
+            connection.on("ReceiveTypingStatus", function (user, isTyping) {
+                const typingIndicator = document.getElementById("typingIndicator");
+                if (isTyping) {
+                    typingIndicator.textContent = `${user} در حال نوشتن پیام است...`;
+                } else {
+                    typingIndicator.textContent = "";
+                }
+            });
+
+            connection.start().catch(err => console.error(err.toString()));
+
+            document.getElementById("joinButton").addEventListener("click", async function () {
+                currentUser = document.getElementById("userInput").value.trim();
+                currentRoom = document.getElementById("roomInput").value.trim();
+
+                if (!currentUser || !currentRoom) {
+                    alert("لطفاً نام و نام اتاق را وارد کنید.");
+                    return;
+                }
+
+                await connection.invoke("JoinRoom", currentUser, currentRoom);
+
+                document.getElementById("setup-container").classList.add("hidden");
+                document.getElementById("chat-box").classList.remove("hidden");
+                document.getElementById("roomTitle").textContent = `اتاق: ${currentRoom}`;
+            });
+
+            const messageInput = document.getElementById("messageInput");
+            messageInput.addEventListener("input", function () {
+                connection.invoke("SendTypingStatus", currentRoom, currentUser, true);
+                clearTimeout(typingTimeout);
+                typingTimeout = setTimeout(function () {
+                    connection.invoke("SendTypingStatus", currentRoom, currentUser, false);
+                }, 2000);
+            });
+
+            document.getElementById("sendButton").addEventListener("click", async function () {
+                const message = messageInput.value.trim();
+                if (!message) return;
+
+                clearTimeout(typingTimeout);
+                await connection.invoke("SendTypingStatus", currentRoom, currentUser, false);
+
+                // تولید یک شناسه یکتا (UUID) برای پیام
+                const messageId = 'msg_' + Math.random().toString(36).substr(2, 9);
+
+                // نمایش پیام در صفحه خود فرستنده با یک تیک (✓) اولیه
+                const messagesList = document.getElementById("messagesList");
+                const li = document.createElement("li");
+                li.innerHTML = `<strong>${currentUser}:</strong> ${message} <span class="message-info" id="status-${messageId}">✓</span>`;
+                messagesList.appendChild(li);
+                messagesList.scrollTop = messagesList.scrollHeight;
+
+                try {
+                    // ارسال پیام به سرور به همراه messageId
+                    await connection.invoke("SendMessage", currentRoom, messageId, currentUser, message);
+                    messageInput.value = "";
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+    </script>
+
+</body>
+</html>
