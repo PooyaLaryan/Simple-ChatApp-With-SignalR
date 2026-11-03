@@ -2,15 +2,16 @@
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>چت دو نفره با SignalR</title>
+    <title>سیستم چت دو نفره هوشمند</title>
     <style>
         body {
             font-family: Tahoma, sans-serif;
             background: #f4f4f9;
             padding: 20px;
+            margin: 0;
         }
 
-        .chat-container {
+        .container {
             max-width: 500px;
             margin: auto;
             background: white;
@@ -20,23 +21,66 @@
         }
 
         .hidden {
-            display: none;
+            display: none !important;
+        }
+
+        input, button {
+            padding: 10px;
+            margin: 8px 0;
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background: #0056b3;
+            }
+
+        .chat-list-item {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+            .chat-list-item:hover {
+                background: #f8f9fa;
+            }
+
+        .badge {
+            background: #dc3545;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: bold;
         }
 
         #messagesList {
             list-style-type: none;
             padding: 0;
-            height: 250px;
+            height: 300px;
             overflow-y: scroll;
             border: 1px solid #ddd;
-            margin-bottom: 5px;
+            margin-bottom: 10px;
             padding: 10px;
+            background: #fafafa;
         }
 
             #messagesList li {
                 margin-bottom: 8px;
-                border-bottom: 1px dashed #eee;
                 padding-bottom: 4px;
+                border-bottom: 1px dashed #eee;
             }
 
         .message-info {
@@ -45,25 +89,6 @@
             float: left;
         }
 
-        input, button {
-            padding: 8px;
-            margin: 5px 0;
-            width: 100%;
-            box-sizing: border-box;
-        }
-
-        button {
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-            button:hover {
-                background: #0056b3;
-            }
-
         #typingIndicator {
             font-size: 12px;
             color: #666;
@@ -71,21 +96,37 @@
             font-style: italic;
             margin-bottom: 5px;
         }
+
+        .back-btn {
+            background: #6c757d;
+            margin-bottom: 10px;
+            width: auto;
+            padding: 5px 15px;
+        }
     </style>
 </head>
 <body>
 
-    <div class="chat-container">
-        <!-- فرم ورود به اتاق -->
-        <div id="setup-container">
-            <h2>ورود به اتاق چت</h2>
-            <input type="text" id="userInput" placeholder="نام شما..." />
-            <input type="text" id="roomInput" placeholder="نام اتاق (مثلا: room1)..." />
-            <button id="joinButton">ورود به اتاق</button>
+    <div class="container">
+        <!-- بخش ۱: ورود کاربر -->
+        <div id="login-container">
+            <h2>ورود به سیستم چت</h2>
+            <input type="text" id="usernameInput" placeholder="نام کاربری خود را وارد کنید..." />
+            <button id="loginButton">ورود و مشاهده لیست چت‌ها</button>
         </div>
 
-        <!-- بخش مکالمه -->
-        <div id="chat-box" class="hidden">
+        <!-- بخش ۲: لیست چت‌ها -->
+        <div id="chat-list-container" class="hidden">
+            <h3>لیست گفتگوهای شما</h3>
+            <p>کاربر گرامی: <strong id="currentUsernameDisplay"></strong></p>
+            <div id="chatsListContainer">
+                <!-- مخاطبین به صورت دینامیک اینجا بارگذاری می‌شوند -->
+            </div>
+        </div>
+
+        <!-- بخش ۳: اتاق چت اختصاصی -->
+        <div id="chat-room-container" class="hidden">
+            <button class="back-btn" id="backToListBtn">← بازگشت به لیست چت‌ها</button>
             <h3 id="roomTitle"></h3>
             <ul id="messagesList"></ul>
             <div id="typingIndicator"></div>
@@ -96,97 +137,177 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
     <script>
-            const connection = new signalR.HubConnectionBuilder()
+            let currentUser = "";
+            let targetUser = "";
+            let currentRoom = "";
+            let typingTimeout = null;
+
+            // اتصال به هاب لیست چت‌ها
+            const chatListConnection = new signalR.HubConnectionBuilder()
+                .withUrl("/chatlisthub")
+                .build();
+
+            // اتصال به هاب چت اصلی
+            const chatConnection = new signalR.HubConnectionBuilder()
                 .withUrl("/chathub")
                 .build();
 
-            let currentRoom = "";
-            let currentUser = "";
-            let typingTimeout = null;
+            // رویداد دریافت لیست چت‌ها
+            chatListConnection.on("ReceiveChatList", function (chats) {
+                renderChatList(chats);
+            });
 
-            // دریافت پیام جدید
-            connection.on("ReceiveMessage", function (messageId, user, message) {
-                const messagesList = document.getElementById("messagesList");
-                const li = document.createElement("li");
-                li.innerHTML = `<strong>${user}:</strong> ${message} <span class="message-info" id="status-${messageId}">✓</span>`;
-                messagesList.appendChild(li);
-                messagesList.scrollTop = messagesList.scrollHeight;
-
-                // اگر این پیام توسط کاربر مقابل فرستاده شده، به سرور اعلام می‌کنیم که خوانده شده است
-                if (user !== currentUser) {
-                    connection.invoke("MarkAsRead", currentRoom, messageId);
+            // رویداد ورود کاربر جدید برای آپدیت خودکار لیست مخاطبین همه کاربران
+            chatListConnection.on("NewUserJoined", function (newUsername) {
+                if (currentUser) {
+                    chatListConnection.invoke("GetUserChats", currentUser);
                 }
             });
 
-            // دریافت رویداد خوانده شدن پیام (تبدیل یک تیک به دو تیک)
-            connection.on("MessageRead", function (messageId) {
+            // رویداد آپدیت لحظه‌ای تعداد خوانده نشده‌ها در لیست چت هنگام دریافت پیام جدید
+            chatListConnection.on("UpdateChatList", function (sender, message, unreadCount) {
+                const badgeElem = document.getElementById(`badge-${sender}`);
+                const lastMsgElem = document.getElementById(`lastmsg-${sender}`);
+
+                if (badgeElem) {
+                    badgeElem.textContent = unreadCount;
+                    badgeElem.classList.remove("hidden");
+                }
+                if (lastMsgElem) {
+                    lastMsgElem.textContent = message;
+                }
+            });
+
+            // دریافت پیام جدید در اتاق چت
+            chatConnection.on("ReceiveMessage", function (messageId, sender, message) {
+                appendMessage(sender, message, messageId, "✓");
+                if (sender === targetUser) {
+                    chatConnection.invoke("MarkMessagesAsRead", currentRoom, currentUser);
+                }
+            });
+
+            // تیک دوم (خوانده شد)
+            chatConnection.on("MessageRead", function (messageId) {
                 const statusSpan = document.getElementById(`status-${messageId}`);
                 if (statusSpan) {
-                    statusSpan.textContent = "✓✓"; // دو تیک (خوانده شد)
-                    statusSpan.style.color = "#4CAF50"; // رنگ سبز برای تیک دوم
+                    statusSpan.textContent = "✓✓";
+                    statusSpan.style.color = "#28a745";
                 }
             });
 
-            connection.on("ReceiveTypingStatus", function (user, isTyping) {
+            chatConnection.on("ReceiveTypingStatus", function (user, isTyping) {
                 const typingIndicator = document.getElementById("typingIndicator");
-                if (isTyping) {
-                    typingIndicator.textContent = `${user} در حال نوشتن پیام است...`;
-                } else {
-                    typingIndicator.textContent = "";
-                }
+                typingIndicator.textContent = isTyping ? `${user} در حال نوشتن پیام است...` : "";
             });
 
-            connection.start().catch(err => console.error(err.toString()));
+            // شروع اتصالات
+            async function startConnections() {
+                await chatListConnection.start();
+                await chatConnection.start();
+            }
+            startConnections();
 
-            document.getElementById("joinButton").addEventListener("click", async function () {
-                currentUser = document.getElementById("userInput").value.trim();
-                currentRoom = document.getElementById("roomInput").value.trim();
-
-                if (!currentUser || !currentRoom) {
-                    alert("لطفاً نام و نام اتاق را وارد کنید.");
+            // دکمه ورود
+            document.getElementById("loginButton").addEventListener("click", async function () {
+                currentUser = document.getElementById("usernameInput").value.trim();
+                if (!currentUser) {
+                    alert("لطفاً نام کاربری خود را وارد کنید.");
                     return;
                 }
 
-                await connection.invoke("JoinRoom", currentUser, currentRoom);
+                document.getElementById("currentUsernameDisplay").textContent = currentUser;
+                document.getElementById("login-container").classList.add("hidden");
+                document.getElementById("chat-list-container").classList.remove("hidden");
 
-                document.getElementById("setup-container").classList.add("hidden");
-                document.getElementById("chat-box").classList.remove("hidden");
-                document.getElementById("roomTitle").textContent = `اتاق: ${currentRoom}`;
+                await chatListConnection.invoke("GetUserChats", currentUser);
             });
 
-            const messageInput = document.getElementById("messageInput");
-            messageInput.addEventListener("input", function () {
-                connection.invoke("SendTypingStatus", currentRoom, currentUser, true);
-                clearTimeout(typingTimeout);
-                typingTimeout = setTimeout(function () {
-                    connection.invoke("SendTypingStatus", currentRoom, currentUser, false);
-                }, 2000);
+            // رندر کردن لیست چت‌ها در صفحه
+            function renderChatList(chats) {
+                const container = document.getElementById("chatsListContainer");
+                container.innerHTML = "";
+
+                if (chats.length === 0) {
+                    container.innerHTML = "<p>کاربر دیگری در سیستم وجود ندارد.</p>";
+                    return;
+                }
+
+                chats.forEach(chat => {
+                    const div = document.createElement("div");
+                    div.className = "chat-list-item";
+                    div.innerHTML = `
+                        <div>
+                            <strong>${chat.username}</strong>
+                            <div style="font-size: 12px; color: #666;" id="lastmsg-${chat.username}">${chat.lastMessage}</div>
+                        </div>
+                        <div>
+                            <span class="badge ${chat.unreadCount > 0 ? '' : 'hidden'}" id="badge-${chat.username}">${chat.unreadCount}</span>
+                        </div>
+                    `;
+                    div.addEventListener("click", () => openChatRoom(chat.username));
+                    container.appendChild(div);
+                });
+            }
+
+            // باز کردن اتاق چت با فرد مورد نظر
+            async function openChatRoom(otherUser) {
+                targetUser = otherUser;
+                currentRoom = currentUser.localeCompare(targetUser) < 0 ? `${currentUser}_${targetUser}` : `${targetUser}_${currentUser}`;
+
+                document.getElementById("chat-list-container").classList.add("hidden");
+                document.getElementById("chat-room-container").classList.remove("hidden");
+                document.getElementById("roomTitle").textContent = `گفتگو با: ${targetUser}`;
+                document.getElementById("messagesList").innerHTML = "";
+
+                await chatConnection.invoke("JoinRoom", currentUser, currentRoom);
+                await chatConnection.invoke("MarkMessagesAsRead", currentRoom, currentUser);
+
+                const badge = document.getElementById(`badge-${targetUser}`);
+                if(badge) badge.classList.add("hidden");
+            }
+
+            // بازگشت به لیست چت‌ها
+            document.getElementById("backToListBtn").addEventListener("click", async function () {
+                document.getElementById("chat-room-container").classList.add("hidden");
+                document.getElementById("chat-list-container").classList.remove("hidden");
+                await chatListConnection.invoke("GetUserChats", currentUser);
             });
 
+            // ارسال پیام
             document.getElementById("sendButton").addEventListener("click", async function () {
+                const messageInput = document.getElementById("messageInput");
                 const message = messageInput.value.trim();
                 if (!message) return;
 
                 clearTimeout(typingTimeout);
-                await connection.invoke("SendTypingStatus", currentRoom, currentUser, false);
+                await chatConnection.invoke("SendTypingStatus", currentRoom, currentUser, false);
 
-                // تولید یک شناسه یکتا (UUID) برای پیام
                 const messageId = 'msg_' + Math.random().toString(36).substr(2, 9);
-
-                // نمایش پیام در صفحه خود فرستنده با یک تیک (✓) اولیه
-                const messagesList = document.getElementById("messagesList");
-                const li = document.createElement("li");
-                li.innerHTML = `<strong>${currentUser}:</strong> ${message} <span class="message-info" id="status-${messageId}">✓</span>`;
-                messagesList.appendChild(li);
-                messagesList.scrollTop = messagesList.scrollHeight;
+                appendMessage(currentUser, message, messageId, "✓");
 
                 try {
-                    // ارسال پیام به سرور به همراه messageId
-                    await connection.invoke("SendMessage", currentRoom, messageId, currentUser, message);
+                    await chatConnection.invoke("SendMessage", currentRoom, messageId, currentUser, targetUser, message);
                     messageInput.value = "";
                 } catch (err) {
                     console.error(err);
                 }
+            });
+
+            function appendMessage(sender, message, messageId, status) {
+                const messagesList = document.getElementById("messagesList");
+                const li = document.createElement("li");
+                li.innerHTML = `<strong>${sender}:</strong> ${message} <span class="message-info" id="status-${messageId}">${status}</span>`;
+                messagesList.appendChild(li);
+                messagesList.scrollTop = messagesList.scrollHeight;
+            }
+
+            // مدیریت تایپ کردن
+            document.getElementById("messageInput").addEventListener("input", function () {
+                chatConnection.invoke("SendTypingStatus", currentRoom, currentUser, true);
+                clearTimeout(typingTimeout);
+                typingTimeout = setTimeout(function () {
+                    chatConnection.invoke("SendTypingStatus", currentRoom, currentUser, false);
+                }, 2000);
             });
     </script>
 

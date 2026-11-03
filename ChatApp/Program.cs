@@ -24,6 +24,7 @@ app.UseStaticFiles();
 app.UseRouting();
 
 app.MapHub<ChatHub>("/chathub");
+app.MapHub<ChatListHub>("/chatlisthub");
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
