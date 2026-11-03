@@ -1,34 +1,40 @@
 ﻿using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
-public class ChatListHub : Hub
+public class ChatListHub : Hub<IChatListHub>
 {
     private readonly ChatDbContext _context;
+    private readonly ChatListHubPublisher _publisher;
 
-    public ChatListHub(ChatDbContext context)
+    public ChatListHub(ChatDbContext context, ChatListHubPublisher publisher)
     {
         _context = context;
+        _publisher = publisher;
     }
 
     public async Task GetUserChats(string username)
     {
         // ثبت یا آپدیت اتصال کاربر
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == username);
+        bool isNew = false;
         if (user == null)
         {
             _context.Users.Add(new User { Username = username, ConnectionId = Context.ConnectionId });
-            await _context.SaveChangesAsync();
-
-            // اطلاع به سایر کاربران آنلاین که یک کاربر جدید وارد سیستم شده است
-            await Clients.Others.SendAsync("NewUserJoined", username);
+            isNew = true;
         }
         else
         {
             user.ConnectionId = Context.ConnectionId;
-            await _context.SaveChangesAsync();
+        }
+        await _context.SaveChangesAsync();
+
+        // اگر کاربر جدید است، به همه اعلام کن
+        if (isNew)
+        {
+            await _publisher.NotifyNewUserJoinedAsync(username);
         }
 
-        // دریافت تمام کاربران دیگر به عنوان مخاطبین چت
+        // استخراج لیست مخاطبین و تعداد پیام‌های خوانده‌نشده
         var allUsers = await _context.Users
             .Where(u => u.Username != username)
             .ToListAsync();
@@ -55,7 +61,8 @@ public class ChatListHub : Hub
             });
         }
 
-        await Clients.Caller.SendAsync("ReceiveChatList", chatList);
+        // ارسال لیست به کلاینت درخواست‌دهنده
+        await Clients.Caller.ReceiveChatList(chatList);
     }
 
     private string GetRoomName(string user1, string user2)

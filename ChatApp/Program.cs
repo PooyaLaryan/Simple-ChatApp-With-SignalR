@@ -11,6 +11,9 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+builder.Services.AddScoped<ChatHubPublisher>();
+builder.Services.AddScoped<ChatListHubPublisher>();
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
