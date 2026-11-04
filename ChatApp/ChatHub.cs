@@ -91,8 +91,11 @@ public class ChatHub : Hub<IChatHub>
 
     public async Task MarkMessagesAsRead(string roomName, string readerUser)
     {
+        // صدا زدن پابلشر برای بروزرسانی دیتابیس و خبر دادن به فرستنده پیام‌ها
         await _publisher.MarkMessagesAsReadAsync(roomName, readerUser);
-        await Clients.Group(roomName).MessageRead(readerUser); // اطلاع‌رسانی به گروه
+
+        // اطلاع‌رسانی به سایر اعضای اتاق (در صورت نیاز)
+        await Clients.OthersInGroup(roomName).MessageRead(readerUser);
     }
 
     public async Task SendTypingStatus(string roomName, string user, bool isTyping)
